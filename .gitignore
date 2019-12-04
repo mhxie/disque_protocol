@@ -1,0 +1,4 @@
+.vscode
+*.sqlite
+/examples
+__pycache__
