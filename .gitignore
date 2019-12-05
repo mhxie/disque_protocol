@@ -1,4 +1,5 @@
 .vscode
 *.sqlite
+/venv
 /examples
 __pycache__

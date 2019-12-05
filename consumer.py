@@ -12,7 +12,7 @@ class Consumer():
 
     def __init__(self, consumer_urls, i):
         self.context = zmq.Context.instance()
-        self.socket = self.context.socket(zmq.REQ)
+        self.socket = self.context.socket(zmq.DEALER)
         self.socket.identity = (u"Producer-%d" % (i)).encode('ascii')
 
         # Get producer urls in the future
@@ -29,18 +29,14 @@ class Consumer():
         self.timer.start()
 
     def send_a_req(self):
-        tail = None
-        while tail != b'DONE':
-            try:
-                self.socket.send(b'CONSUME')
-                prod_id, empty, data, tail = self.socket.recv_multipart()
-            except zmq.ContextTerminated:
-                print("ZMQ context terminated.")
-                return
+        self.socket.send(b'CONSUME')
+        msg = self.socket.recv()
+        del msg # consumed
         self.consume_success()
 
     def consume_success(self):
         self.consumed += 1
+        self.socket.send(b'CONSUMED')
         if self.consumed > MAX_RUN_TIME:
             self.timer.cancel()
 

@@ -14,14 +14,14 @@ from common.global_var import *
 
 class Producer():
 
-    def __init__(self, producer_urls, i):
+    def __init__(self, broker_urls, i):
         self.context = zmq.Context.instance()
         self.socket = self.context.socket(zmq.REQ)
         self.socket.identity = (u"Producer-%d" % (i)).encode('ascii')
 
         # Get producer urls in the future
         # connect to a random broker
-        self.socket.connect(random.choice(producer_urls))
+        self.socket.connect(random.choice(broker_urls))
 
         self.timer = RecurTimer(1/produce_rate, self.send_a_msg)
 
@@ -33,22 +33,16 @@ class Producer():
         self.timer.start()
 
     def send_a_msg(self):
-        reply = None
         random_msg = ''.join(
-            [random.choice(string.ascii_letters + string.digits) for n in xrange(MSG_SIZE)])
-        while reply != b'SUCCESS':
-            try:
-                self.socket.send(random_msg)
-                reply = self.socket.recv()
-            except zmq.ContextTerminated:
-                print("ZMQ context terminated.")
-                return
+            [random.choice(string.ascii_letters + string.digits) for n in range(MSG_SIZE)])
+        self.socket.send(random_msg.encode('ascii'))
         self.send_success()
+    
+    def send_failure(self):
+        self.failed += 1
 
     def send_success(self):
         self.sent += 1
-        if self.sent > MAX_RUN_TIME:
-            self.timer.cancel()
 
 
 def producer_thread(i):
