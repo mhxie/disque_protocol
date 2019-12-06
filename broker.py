@@ -4,6 +4,7 @@ import zmq
 import threading
 import random
 import asyncio
+import time
 
 from zmq.eventloop.ioloop import IOLoop
 from zmq.eventloop.zmqstream import ZMQStream
@@ -17,6 +18,7 @@ peer_topo = []
 
 if not ENABLE_ROCKSDB:
     PERSIST_THRESHOLD = 1
+DEBUG = False
 
 class Broker(object):
     def __init__(self, urls, id):
@@ -26,8 +28,12 @@ class Broker(object):
         self.replicated_msgs = {}
         self.capacity = MAX_MSG_CAPACITY
 
+        # self.consume_lock = threading.Lock()
+        # self.consuming = False
+
         asyncio.set_event_loop(asyncio.new_event_loop())
         # self.loop = ioloop.IOLoop.current()
+        self.__init_metrics()
         self.__init_sockets(urls)
         self.__set_callback()
         self.loop = IOLoop.instance()
@@ -64,6 +70,9 @@ class Broker(object):
         self.backend.on_recv(self.handle_backend)
         self.peerend.on_recv(self.handle_peerend)
 
+    def __init_metrics(self):
+        pass
+
     def __lost_peer(self, url):
         pass
 
@@ -73,25 +82,29 @@ class Broker(object):
     def __insert_add_ahead_log(self, prod_id, msg_id, dst):
         """ Implementation of add-ahead-log (AAL)
         """
-        print('Thread', self.id, 'inserting AAL', prod_id, msg_id, dst)
+        if DEBUG == True:
+            print('Thread', self.id, 'inserting AAL', prod_id, msg_id, dst)
         if prod_id not in self.AAL.keys():
             self.AAL[prod_id] = {}
         self.AAL[prod_id][msg_id] = dst
 
     def __remove_add_ahead_log(self, prod_id, msg_id):
-        print("removing AAL", prod_id, msg_id)
+        if DEBUG == True:
+            print("removing AAL", prod_id, msg_id)
         del self.AAL[prod_id][msg_id]
 
     def __insert_delete_ahead_log(self, prod_id, msg_id, dst):
         """ Implementation of delete-ahead-log (DAL)
         """
-        print('Thread', self.id, 'inserting DAL', prod_id, msg_id, dst)
+        if DEBUG == True:
+            print('Thread', self.id, 'inserting DAL', prod_id, msg_id, dst)
         if prod_id not in self.DAL.keys():
             self.DAL[prod_id] = {}
         self.DAL[prod_id][msg_id] = dst
 
     def __remove_delete_ahead_log(self, prod_id, msg_id):
-        print("removing DAL", prod_id, msg_id)
+        if DEBUG == True:
+            print("removing DAL", prod_id, msg_id)
         del self.DAL[prod_id][msg_id]
 
     def __send_replicates(self, prod_id, msg_id, payload):
@@ -123,7 +136,7 @@ class Broker(object):
         self.rocks[prod_id][msg_id] = msg
 
     def __retrieve_msgs(self, num=1):
-        if len(self.rocks.keys() == 0):
+        if len(list(self.rocks.keys())) == 0:
             return
         for _ in range(num):
             prod_id = random.choice(list(self.rocks.keys()))
@@ -140,7 +153,7 @@ class Broker(object):
                     self.queued_msgs[prod_id] = {}
                 self.queued_msgs[prod_id][msg_id] = payload
             else:
-                self.__persist_msgs(prod_id, msg_id, msg)  # sorta redundant
+                self.__persist_msgs(prod_id, msg_id, payload)  # sorta redundant
         else:
             if prod_id not in self.replicated_msgs.keys():
                 self.replicated_msgs[prod_id] = {}
@@ -152,18 +165,28 @@ class Broker(object):
             msg_id = random.choice(list(self.queued_msgs[prod_id].keys()))
             # msg_id, payload = self.queued_msgs[prod_id].popitem()
             return [prod_id, msg_id, self.queued_msgs[prod_id][msg_id]]
-        except IndexError or KeyboardInterrupt:
+        except IndexError:
             return [None, None, None]
 
     def __dequeue_a_msg(self, prod_id, msg_id, replica=False):
         if not replica:
             if self.__get_size_of_queues() == self.capacity * PERSIST_THRESHOLD:
                 self.__retrieve_msgs()
-            print("dequing:", self.queued_msgs[prod_id])
-            return self.queued_msgs[prod_id].pop(msg_id)
+            if DEBUG == True:
+                print(self.id, "dequing:", self.queued_msgs[prod_id])
+            try:
+                return self.queued_msgs[prod_id].pop(msg_id)
+            except IndexError:
+                if DEBUG == True:
+                    print("Already consumed. (Delivered twice)")
+                return None
         else:
-            print("dequing replica:", self.replicated_msgs[prod_id])
-            return self.replicated_msgs[prod_id].pop(msg_id)
+            if DEBUG == True:
+                print(self.id, "dequing replica:", self.replicated_msgs[prod_id])
+            try:
+                return self.replicated_msgs[prod_id].pop(msg_id)
+            except KeyError:
+                return None
 
     def __consume_a_msg(self, cons_id):
         prod_id, msg_id, payload = self.__get_a_msg()
@@ -172,38 +195,53 @@ class Broker(object):
             next_timer.start()
             return
         else:
-            print('get_a_msg', prod_id, msg_id, payload)
+            pass
+            # print('get_a_msg', prod_id, msg_id, payload)
         self.backend.send_multipart([cons_id, prod_id, msg_id, payload])
 
     def handle_frontend(self, msg):
-        print(self.id, 'handling frontend:', msg)
-        prod_id, _, msg_id, payload = msg[:4]
+        if DEBUG == True:
+            print(self.id, 'handling frontend:', msg)
+        start_time = time.time_ns()
+        prod_id, msg_id, payload = msg[:3]
         self.__enqueue_a_msg(prod_id, msg_id, payload)
         self.__send_replicates(prod_id, msg_id, payload)
+        # print("Time for frontend is", time.time_ns() - start_time)
 
     def handle_backend(self, msg):
-        print(self.id, 'handling backend:', msg)
+        if DEBUG == True:
+            print(self.id, 'handling backend:', msg)
         cons_id, command = msg[:2]
+        start_time = time.time_ns()
         if command == b'CONSUME':
+            start_time = time.time_ns()
             self.__consume_a_msg(cons_id)
         elif command == b'CONSUMED':
             prod_id, msg_id = msg[2:4]
-            self.__dequeue_a_msg(prod_id, msg_id)
-            self.__delete_replicates(prod_id, msg_id)
+            res = self.__dequeue_a_msg(prod_id, msg_id)
+            if res is not None:
+                self.__delete_replicates(prod_id, msg_id)
+            # print("Time for backend is", time.time_ns() - start_time)
 
     def handle_peerend(self, msg):
-        print(self.id, 'handling peerend', msg)
+        if DEBUG == True:
+            print(self.id, 'handling peerend', msg)
         broker_id, _, command = msg[:3]
+        start_time = None
         if command == b'REPLICATE':
+            start_time = time.time_ns()
             prod_id, msg_id, payload = msg[3:6]
             self.__enqueue_a_msg(prod_id, msg_id, payload, replica=True)
             # self.peerend.send_multipart([broker_id, b'', b'REPLICATED', prod_id, msg_id])
             self.peerend.send_multipart([broker_id, b'', b'REPLICATED'])
+            # print("Time for replication is", time.time_ns() - start_time)
         elif command == b'DELETE':
+            start_time = time.time_ns()
             prod_id, msg_id = msg[3:5]
             self.__dequeue_a_msg(prod_id, msg_id, replica=True)
             # self.peerend.send_multipart([broker_id, b'', b'DELETED', prod_id, msg_id])
             self.peerend.send_multipart([broker_id, b'', b'DELETED'])
+            # print("Time for deletion is", time.time_ns() - start_time)
         # elif command == b"REPLICATED":
         #     self.__remove_add_ahead_log(prod_id, msg_id)
         # elif command == b"DELETED":

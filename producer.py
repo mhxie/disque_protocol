@@ -18,7 +18,7 @@ class Producer():
 
     def __init__(self, broker_urls, i):
         self.context = zmq.Context.instance()
-        self.socket = self.context.socket(zmq.REQ)
+        self.socket = self.context.socket(zmq.DEALER)
         self.socket.identity = (u"Producer-%d" % (i)).encode('ascii')
         self.__init_metrics()
         # Get producer urls in the future
@@ -43,22 +43,28 @@ class Producer():
         # self.timer.start()
         # self.caller = ioloop.PeriodicCallback(self.send_a_msg, int(1000/produce_rate))
         # self.caller.start()
-        self.send_a_msg()
-        # ns_between_sends = 10**9/produce_rate
-        # last_send_time = time.time_ns()
-        # while self.sent < produce_rate*MAX_RUN_TIME:
-        #     if (time.time_ns() - last_send_time > ns_between_sends):
-        #         self.send_a_msg()
-        #         last_send_time = time.time_ns()
+        # self.send_msg(10)
+        start_time = time.time_ns()
+        ns_between_sends = 10**9/produce_rate
+        avg = 0
+        last_send_time = time.time_ns()
+        while self.sent < produce_rate*MAX_RUN_TIME:
+            if (time.time_ns() - last_send_time > ns_between_sends):
+                self.send_msg(1)
+                now = time.time_ns()
+                avg += (now - last_send_time)/10**6
+                last_send_time = now
+        print("Producer spent", (time.time_ns()-start_time)/10**9, "on rate", produce_rate, "with latency", avg/(produce_rate*MAX_RUN_TIME))
 
 
-    def send_a_msg(self):
+    def send_msg(self, num=1):
         random_msg = ''.join(
             [random.choice(string.ascii_letters + string.digits) for n in range(MSG_SIZE)])
         random_key = ''.join(
             [random.choice(string.digits) for n in range(KEY_SIZE)])
-        self.socket.send_multipart([random_key.encode('ascii'), random_msg.encode('ascii')])
-        self.send_success()
+        for _ in range(num):
+            self.socket.send_multipart([random_key.encode('ascii'), random_msg.encode('ascii')])
+            self.send_success()
     
     def send_failure(self):
         self.failed += 1
@@ -66,6 +72,7 @@ class Producer():
     def send_success(self):
         self.sent += 1
         self.msg_id += 1
+        # print("sent one product")
 
 
 def producer_thread(i):
