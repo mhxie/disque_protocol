@@ -1,8 +1,8 @@
 # topology settings
 BROKER_NUM = 4
-REPLICA_NUM = 2
-PRODUCER_NUM = 4
-CONSUMER_NUM = 2
+REPLICA_NUM = 1
+PRODUCER_NUM = 1
+CONSUMER_NUM = 1
 
 # local settings
 PERSIST_THRESHOLD = 0.8
@@ -17,4 +17,6 @@ NODE_CHANGE_DURATION = 5
 
 # communiction setting
 MSG_SIZE = 32
+KEY_SIZE = 16
 WAIT_TIME = 128
+NEXT_CONSUME_TIME = 1/consume_rate/2 #ms

@@ -13,30 +13,35 @@ class Consumer():
     def __init__(self, consumer_urls, i):
         self.context = zmq.Context.instance()
         self.socket = self.context.socket(zmq.DEALER)
-        self.socket.identity = (u"Producer-%d" % (i)).encode('ascii')
+        self.socket.identity = (u"Consumer-%d" % (i)).encode('ascii')
+        self.__init_metrics()
 
         # Get producer urls in the future
         # connect to a random broker
-        self.socket.connect(random.choice(consumer_urls))
+        # self.socket.connect(random.choice(consumer_urls))
+        self.socket.connect(consumer_urls[0])
 
-        self.timer = RecurTimer(1/throughput, self.send_a_req)
+        # self.timer = RecurTimer(1/consume_rate, self.send_a_req)
 
     def __init_metrics(self):
         self.consumed = 0
         self.failed = 0
 
     def run(self):
-        self.timer.start()
+        # self.timer.start()
+        self.send_a_req()
 
     def send_a_req(self):
         self.socket.send(b'CONSUME')
-        msg = self.socket.recv()
-        del msg # consumed
-        self.consume_success()
+        msg = self.socket.recv_multipart()
+        print('Consumer got', msg)
+        prod_id, msg_id = msg[:2]
+        del msg# consumed data
+        self.consume_success(prod_id, msg_id)
 
-    def consume_success(self):
+    def consume_success(self, prod_id, msg_id):
         self.consumed += 1
-        self.socket.send(b'CONSUMED')
+        self.socket.send_multipart([b'CONSUMED', prod_id, msg_id])
         if self.consumed > MAX_RUN_TIME:
             self.timer.cancel()
 

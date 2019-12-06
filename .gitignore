@@ -1,5 +1,6 @@
 .vscode
 *.sqlite
+*.ipc
 /venv
 /examples
 __pycache__
